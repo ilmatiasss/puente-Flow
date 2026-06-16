@@ -1,7 +1,7 @@
 const crypto = require('crypto');
+const querystring = require('querystring');
 
 module.exports = async (req, res) => {
-    // Headers de CORS por seguridad
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -11,14 +11,28 @@ module.exports = async (req, res) => {
     }
 
     try {
-        // Al enviar por formulario tradicional, los datos llegan directo en req.body
-        const amount = req.body?.amount;
-        const email = req.body?.email || "cliente@correo.com";
+        let amount;
+        let email = "cliente@correo.com";
 
-        // ---- [REEMPLAZA AQUÍ CON LAS LLAVES REALES DE PRODUCCIÓN] ----
+        // Parser robusto para capturar los datos del formulario nativo de Horizons
+        if (req.body) {
+            let dataObj = req.body;
+            if (typeof req.body === 'string') {
+                // Si viene codificado como URL (amount=4500&email=...)
+                if (req.body.includes('=')) {
+                    dataObj = querystring.parse(req.body);
+                } else {
+                    try { dataObj = JSON.parse(req.body); } catch(e){}
+                }
+            }
+            amount = dataObj.amount;
+            email = dataObj.email || email;
+        }
+
+        // ---- [CREDANCIALES DE PRODUCCIÓN] ----
         const apiKey = "4CAEF18E-D096-4560-856E-86697C6BL20B";
         const secretKey = "73043bbffed5af0e96783ccd34c07f13f39a21ce";
-        // -------------------------------------------------------------
+        // --------------------------------------
         
         const commerceOrder = `FRUT-${Date.now()}`;
 
@@ -36,17 +50,14 @@ module.exports = async (req, res) => {
             urlReturn: "https://fruterra.cl/"
         };
 
-        // 1. Ordenar parámetros alfabéticamente
         const sortedKeys = Object.keys(flowParams).sort();
         let signString = "";
         sortedKeys.forEach((key) => { signString += `${key}=${flowParams[key]}&`; });
         signString = signString.slice(0, -1);
 
-        // 2. Generar firma HMAC-SHA256 con la librería nativa de Node
         const signature = crypto.createHmac('sha256', secretKey).update(signString).digest('hex');
         flowParams.s = signature;
 
-        // 3. Llamada interna de servidor a servidor hacia la API de Flow
         const response = await fetch('https://flow.cl/api/payment/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -56,8 +67,6 @@ module.exports = async (req, res) => {
         const data = await response.json();
 
         if (data && data.url && data.token) {
-            // TRUCO MAESTRO: Como este archivo se ejecuta en el navegador tras el submit, 
-            // respondemos con un script HTML que inyecta la redirección visual automática a Webpay.
             res.setHeader('Content-Type', 'text/html');
             return res.status(200).send(`
                 <!DOCTYPE html>
@@ -75,6 +84,6 @@ module.exports = async (req, res) => {
         }
 
     } catch (error) {
-        return res.status(500).send("Error interno en el puente: " + error.message);
+        return res.status(500).send("Error interno: " + error.message);
     }
 };
